@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P File Sharing</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1 class="text-center">
+            P2P File Sharing
+        </h1>
+        <form id="form">
+            <div class="form-group container">
+                <label for="files">Upload Files</label>
+                <input class="form-control" type="file" name="" id="upload-input" required>
+            </br>
+                <div class="progress">
+                    <div class="progress-bar progress-bar-success progress-bar-striped" style=" width:0%;"></div>
+                </div>
+
+                <div class="form-group container">
+                    <button id="button" class="btn btn-success">Share File</button>
+                </div>
+                
+        </form>
+    </div>
+</body>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script>
+    let files = [];
+    $("#form").submit(function(event){
+        event.preventDefault();
+
+        $(".progress-bar").text("0%");
+        $("#button").text("Uploading File ");
+        $("#button").prop("disabled", true);
+        $(".progress-bar").width("0%");
+        convertFile();
+    });
+
+    $("#upload-input").change(function(){
+        files = $(this).get(0).files;
+        console.log(files);
+    });
+
+    function convertFile(){
+        if(files.length > 0){
+            let formData = new FormData();//create a formData object.
+             for( let i=0; i<files.length; i++){
+                let file = files[i];
+                formData.append("file", file,file.name);
+             }
+             console.log(formData);
+             let formdata2= new FormData();
+             $.ajax({
+                url: "/uploadfile",
+                type: "POST",
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(data){
+                    console.log(data);
+                    //chnage text of button.
+
+                    $("#button").text("Share Files");
+
+                    $("#button").prop("disabled", null);
+
+                    $("#upload-input").val("");
+
+                    $(".progress-bar").width("0%");
+                },
+
+                xhr: function(){
+                    let xhr = new XMLHttpRequest();
+
+                    xhr.upload.addEventListener("progress",function(evt){
+                            if(evt.lengthComputable){
+                                let percentComplete = Math.round((evt.loaded/evt.total)*100);
+                                console.log("progress:",evt.loaded,"/",evt.total);
+                                // percentComplete = parseInt(percentComplete);
+                                $(".progress-bar").css("width",percentComplete +"%");
+                                $(".progress-bar").text(percentComplete + "%");
+
+                                if(percentComplete === 100){
+                                    $(".progress-bar").text("Done");
+                                }
+
+                            }
+                        },
+                        false
+                    );
+                    return xhr;
+                },
+             })
+        }
+
+    }
+</script>
+</html>
