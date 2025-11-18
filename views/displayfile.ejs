@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P File Sharing</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+
+</head>
+<body>
+    <div class="container  p-5 my-5">
+        <h1 class="text-success text-center">Your File is ready to Download</h1>
+        <br><br>
+        <h2 class="text-center text-danger">File Info</h2>
+        <h3 class="text-center "><%=path%></h3>
+        <br><br>
+        <input type="text" value="<%=path%>" id="path" hidden>
+        <div  class=" text-center">
+            <button onclick="download()" class="btn btn-outline-primary ">Download</button>
+        </div>
+    </div>
+</body>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+
+<script>
+    function download(){
+        window.open("/download?path=/public/uploads/" + $("#path").val());
+        // location.reload();
+    }
+</script>
+</html>
