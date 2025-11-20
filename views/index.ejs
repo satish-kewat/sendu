@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P File Sharing</title>
+    <title>P2P File Sharing (fixed)</title>
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- QRCode library -->
@@ -17,7 +17,7 @@
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center">P2P File Sharing</h1>
+        <h1 class="text-center">P2P File Sharing (fixed)</h1>
         <form id="form">
             <div class="form-group container">
                 <label for="files">Upload Files</label>
@@ -41,8 +41,8 @@
         <h1 style="display: none;" id="result">File is Uploaded / Received. Now you can share Link </h1>
         <br><br>
         <div id="section" style="display: none;">
-            <input onclick="copy()" class="input-copy" value="" id="url" readonly />
-            <button class="copy-btn" id="copyBtn" onclick="copy()"><i class="fa-regular fa-copy"></i></button>
+            <input onclick="copy()" class="input-copy form-control" value="" id="url" readonly />
+            <button class="copy-btn btn btn-default" id="copyBtn" onclick="copy()" style="margin-top:8px;"><i class="fa-regular fa-copy"></i> Copy</button>
 
             <!-- QR code will appear here -->
             <div id="qrcode"></div>
@@ -52,17 +52,22 @@
         <div id="copied-success"  style="display: none;" class="copied">
             <span>Copied</span>
         </div>
+
+        <!-- debug: quick test QR button -->
+        <div style="margin-top:12px;">
+            <button id="testQrBtn" class="btn btn-info">Show test QR (debug-screenshot)</button>
+        </div>
     </div>
 
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 <script>
 /*
-  Token-based signaling client:
-  - Posts full SDP to server /signal and gets a short token.
-  - QR shows '?t=TOKEN' (short).
-  - Receiver fetches SDP via /signal/:token, creates answer, posts answer and shows answer token.
-  - Initiator fetches answer token and applies answer.
-  - Afterwards DataChannel used to send file.
+  Fixed + hardened client script
+  - robust makeQR with fallback
+  - logs everywhere to help debugging
+  - encodeURIComponent for tokens
+  - increased ICE gathering timeout
+  - optional originOverride for LAN testing
 */
 
 let files = [];
@@ -71,35 +76,51 @@ let dc = null;
 let isInitiator = false;
 const pcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 const CHUNK_SIZE = 64 * 1024; // 64KB
+const DEFAULT_ICE_TIMEOUT = 10000; // 10s
+// If your phone can't reach "location.origin", set LAN_IP_OVERRIDE to 'http://192.168.x.y:5000'
+const LAN_IP_OVERRIDE = null; // <-- set to string if needed for testing
 
 // UI refs
 const connStatus = document.getElementById('connStatus');
 function setConnStatus(s) { connStatus.innerText = s; }
 
-// QR helper
+// QR helper (robust)
 function makeQR(text) {
     try {
+        // clear old
         $("#qrcode").empty();
-        $("#sdpFallback").empty && $("#sdpFallback").empty();
-        new QRCode(document.getElementById("qrcode"), {
-            text: text,
-            width: 200,
-            height: 200,
-            correctLevel: QRCode.CorrectLevel.H
-        });
-        $("#qrcode").show();
+        if ($("#sdpFallback").length) $("#sdpFallback").empty();
+
+        // show URL in input
+        $("#url").val(text);
+
+        // try QR lib
+        try {
+            new QRCode(document.getElementById("qrcode"), {
+                text: text,
+                width: 200,
+                height: 200,
+                correctLevel: QRCode.CorrectLevel.H
+            });
+            $("#qrcode").show();
+        } catch (qrErr) {
+            console.warn('QRCode lib error:', qrErr);
+            $("#qrcode").hide();
+        }
+
+        // always show fallback short URL so user can copy-paste
+        if ($("#sdpFallback").length) {
+            $("#sdpFallback").html('<label>Short URL (open on other device):</label><pre class="sdp-fallback"></pre>');
+            $("#sdpFallback pre").text(text);
+            $("#sdpFallback").show();
+        }
+
         $("#section").show();
     } catch (e) {
-        console.error("QR generation failed:", e);
-        $("#qrcode").hide();
-        if ($("#sdpFallback").length) {
-            $("#sdpFallback").html('<label>SDP (fallback):</label><pre class="sdp-fallback"></pre>');
-            $("#sdpFallback pre").text(text);
-            $("#section").show();
-        }
+        console.error('makeQR general error', e);
     }
 }
-function clearQR() { $("#qrcode").empty().hide(); $("#sdpFallback").empty && $("#sdpFallback").empty(); }
+function clearQR() { $("#qrcode").empty().hide(); if ($("#sdpFallback").length) $("#sdpFallback").empty(); }
 
 // ---------------- SIGNALING HELPERS (use server /signal) ----------------
 async function postSdpGetToken(sdp) {
@@ -108,8 +129,9 @@ async function postSdpGetToken(sdp) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sdp })
   });
-  if (!resp.ok) throw new Error('signal-post-failed: ' + resp.status);
-  const j = await resp.json();
+  const j = await resp.json().catch(err => { console.error('postSdpGetToken: invalid json', err); return null; });
+  console.log('postSdpGetToken response json:', j);
+  if (!j || !j.token) throw new Error('signal-post-failed or missing token');
   return j.token;
 }
 
@@ -129,12 +151,13 @@ async function ensurePC() {
         console.log('ICE state', pc.iceConnectionState);
         setConnStatus('ICE: ' + pc.iceConnectionState);
     };
-    pc.onicecandidate = e => { console.log('icecandidate', !!e.candidate); };
+    pc.onicecandidate = e => { console.log('icecandidate', e && e.candidate); };
     pc.ondatachannel = e => {
         console.log('got datachannel', e.channel.label);
         dc = e.channel;
         setupDC();
     };
+    pc.onconnectionstatechange = () => console.log('pc.connectionState', pc.connectionState);
     return pc;
 }
 
@@ -147,19 +170,21 @@ function setupDC() {
 }
 
 // wait for ICE gathering complete
-function waitForIceGatheringComplete(pcInstance, timeout = 5000) {
+function waitForIceGatheringComplete(pcInstance, timeout = DEFAULT_ICE_TIMEOUT) {
     return new Promise((resolve) => {
-        if (!pcInstance) return resolve();
-        if (pcInstance.iceGatheringState === 'complete') return resolve();
-        const onState = () => {
-            if (pcInstance.iceGatheringState === 'complete') { cleanup(); resolve(); }
-        };
-        const cleanup = () => {
-            pcInstance.removeEventListener('icegatheringstatechange', onState);
-            clearTimeout(tid);
-        };
-        pcInstance.addEventListener('icegatheringstatechange', onState);
-        const tid = setTimeout(() => { cleanup(); resolve(); }, timeout);
+        try {
+            if (!pcInstance) return resolve();
+            if (pcInstance.iceGatheringState === 'complete') return resolve();
+            const onState = () => {
+                if (pcInstance.iceGatheringState === 'complete') { cleanup(); resolve(); }
+            };
+            const cleanup = () => {
+                pcInstance.removeEventListener('icegatheringstatechange', onState);
+                clearTimeout(tid);
+            };
+            pcInstance.addEventListener('icegatheringstatechange', onState);
+            const tid = setTimeout(() => { cleanup(); resolve(); }, timeout);
+        } catch (e) { console.warn('waitForIceGatheringComplete err', e); resolve(); }
     });
 }
 
@@ -202,7 +227,7 @@ function onDCMessage(evt) {
     }
 }
 
-// Create Offer (initiator) - POST offer SDP to server and show short token QR
+// Create Offer (initiator) - POST offer SDP to server and show short token QR + short URL text
 document.getElementById('createConn').addEventListener('click', async () => {
     try {
         isInitiator = true;
@@ -217,18 +242,29 @@ document.getElementById('createConn').addEventListener('click', async () => {
         await pc.setLocalDescription(offer);
 
         // wait for ICE candidates to be gathered (reliable SDP)
-        await waitForIceGatheringComplete(pc, 5000);
+        await waitForIceGatheringComplete(pc, DEFAULT_ICE_TIMEOUT);
 
         const sdpToSend = pc.localDescription.sdp;
 
         // === POST full SDP to server and get short token ===
         const token = await postSdpGetToken(sdpToSend);
-        const url = location.origin + location.pathname + '?t=' + token; // small token in QR
+        const origin = LAN_IP_OVERRIDE || location.origin;
+        const url = origin + location.pathname + '?t=' + encodeURIComponent(token); // small token in QR
 
         makeQR(url);
+
+        // show short URL under QR so receiver can open manually if scanner fails
+        $("#sdpFallback").html('<label>Short URL (open on receiver):</label><pre class="sdp-fallback">' + url + '</pre>');
+        $("#sdpFallback").show();
+
+        // put URL also into the visible input so copy button works
+        $("#url").val(url);
+        $("#section").show();
+
         alert('Offer QR (token) created — scan it from other device (or copy URL).');
         setConnStatus('Offer token created; waiting for answer token (scan answer into this page).');
         console.log('Offer SDP length:', sdpToSend.length);
+        console.log('Offer token URL:', url);
     } catch (err) {
         console.error('Error creating offer:', err);
         alert('Error creating offer — see console for details.');
@@ -250,6 +286,8 @@ document.getElementById('startResponder').addEventListener('click', () => {
         if (params.has('t')) {
             const token = params.get('t');
             setConnStatus('Fetching SDP token from server...');
+            console.log('handleParamsOnLoad: token param ->', token);
+
             // fetch the SDP stored on server (this deletes token on server)
             const remoteSdp = await fetchSdpByToken(token);
 
@@ -262,14 +300,25 @@ document.getElementById('startResponder').addEventListener('click', () => {
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
 
-                await waitForIceGatheringComplete(pc, 5000);
+                await waitForIceGatheringComplete(pc, DEFAULT_ICE_TIMEOUT);
 
                 // Post answer SDP and show a short token QR for initiator to fetch
                 const answerToken = await postSdpGetToken(pc.localDescription.sdp);
-                const url = location.origin + location.pathname + '?t=' + answerToken;
+                const origin = LAN_IP_OVERRIDE || location.origin;
+                const url = origin + location.pathname + '?t=' + encodeURIComponent(answerToken);
                 makeQR(url);
+
+                // show short URL under QR for initiator
+                $("#sdpFallback").html('<label>Short URL (open on initiator):</label><pre class="sdp-fallback">' + url + '</pre>');
+                $("#sdpFallback").show();
+
+                // put URL also into the visible input so copy button works
+                $("#url").val(url);
+                $("#section").show();
+
                 setConnStatus('Answer token created. Show this QR to initiator.');
                 alert('Answer QR (token) created — scan it from initiator device to complete connection.');
+                console.log('Answer token URL:', url);
             } else {
                 // pc exists -> treat as ANSWER for initiator
                 setConnStatus('Applying answer (token)...');
@@ -358,8 +407,6 @@ async function convertFileP2P() {
         if (ok) {
             alert('1) Click "Create Connection" on the sender device.\n2) Scan the displayed Offer QR on the receiving device (open resulting page there).\n3) The receiving device will show an Answer QR — scan that back on the sender. \n4) Wait until status shows "Connected (datachannel open)".\n5) Then click "Share File" again.');
         }
-        // optional fallback (commented on purpose)
-        // uploadToServer(files);
         return;
     }
 
@@ -375,7 +422,7 @@ async function convertFileP2P() {
         clearQR();
     } catch (err) {
         console.error('p2p send error', err);
-        alert('P2P send failed — see console.');
+        alert('P2P send failed — see console.' );
         $("#button").text("Share File");
         $("#button").prop("disabled", false);
     }
@@ -429,6 +476,16 @@ function copy() {
     $("#copied-success").fadeIn(800);
     $("#copied-success").fadeOut(800);
 }
+
+// Test QR button (debug-screenshot route)
+document.getElementById('testQrBtn').addEventListener('click', () => {
+    const origin = LAN_IP_OVERRIDE || location.origin;
+    // debug-screenshot route was added on the server to serve the local file
+    const testUrl = origin + '/debug-screenshot';
+    console.log('Generating test QR for', testUrl);
+    makeQR(testUrl);
+});
+
 </script>
 </body>
 </html>

@@ -1,21 +1,22 @@
 const express = require('express');
-
 const bodyParser = require('body-parser');
-
 const path = require('path');
-
 const fs = require('fs');
-
 const multer = require('multer');
+const cors = require('cors'); // optional, helpful if you test from another origin
 
 const app = express();
-app.use(express.static(path.join(__dirname, "public/uploads")))
+
+// <-- FIX: serve the whole public folder (not only uploads) -->
+app.use(express.static(path.join(__dirname, "public")));
+
+// Allow CORS during development (remove in production if serving same origin)
+app.use(cors());
 
 app.use(bodyParser.urlencoded({ extended: false }));
-
 app.use(bodyParser.json());
 
-//Disk Storage
+// Disk Storage for file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, 'public/uploads');
@@ -30,11 +31,10 @@ const storage = multer.diskStorage({
 
 let upload = multer({ storage: storage }).single('file');
 
-
-//view engine ejs
+// view engine ejs
 app.set('view engine', 'ejs');
 
-//open homepage
+// open homepage
 app.get('/', (req, res) => {
     res.render('index');
 });
@@ -43,6 +43,7 @@ app.post('/uploadfile', (req, res) => {
     upload(req, res, (err) => {
         if (err) {
             console.log(err)
+            return res.status(500).json({ error: 'upload failed' });
         } else {
             console.log(req.file.path);
             res.json({
@@ -81,12 +82,9 @@ app.get('/signal/:token', (req, res) => {
   res.json({ sdp: entry.sdp });
 });
 
-
-//get request to download.
-
+// get request to display file page
 app.get('/files/:id', (req, res) => {
     console.log(req.params.id);
-
     res.render('displayfile', { path: req.params.id })
 })
 
@@ -99,13 +97,18 @@ app.get('/download', (req, res) => {
             res.send(err);
         }
     });
-
 })
 
-
+// Debug route: serve the uploaded screenshot file directly (local path)
+app.get('/debug-screenshot', (req, res) => {
+    const localPath = '/mnt/data/Screenshot 2025-11-20 231528.png';
+    // validate existence
+    if (!fs.existsSync(localPath)) return res.status(404).send('debug file not found');
+    res.sendFile(localPath);
+});
 
 const PORT = process.env.PORT || 5000
 
 app.listen(PORT, () => {
-    console.log("app is lissting")
+    console.log("app is listening on port", PORT)
 })
