@@ -1,4 +1,4 @@
-// server.js - hardened for Render + better logging
+// server.updated.js
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -97,38 +97,54 @@ app.post('/store', (req, res) => {
   res.json({ id });
 });
 
+// CONTENT-NEGOTIATING /t/:id
+// - If the request Accept header includes 'text/html' -> return friendly HTML page (human visitor)
+// - Otherwise -> return the raw token string (programmatic client). Keep single-use semantics when returning raw token.
 app.get('/t/:id', (req, res) => {
   const id = req.params.id;
   const token = tokens.get(id);
+
+  // token missing -> always show friendly HTML page (so direct visitors see the message)
   if (!token) {
     return res.status(404).send(`<html><body style="font-family:sans-serif;padding:20px;"><h2>❌ Token expired or already used</h2><p>This token can only be used once or has expired.</p></body></html>`);
   }
-  res.send(`<!doctype html>
-    <html>
-    <head><meta name="viewport" content="width=device-width,initial-scale=1"><title>P2P Token</title>
-    <style>body{font-family:Arial, Helvetica, sans-serif;padding:20px}.btn{display:inline-block;padding:12px 16px;border-radius:8px;border:none;font-size:16px;margin:6px 0}.btn-primary{background:#0275d8;color:#fff}.btn-ghost{background:#f1f1f1}textarea{width:100%;height:150px;padding:10px;border-radius:8px;border:1px solid #ddd}</style>
-    </head>
-    <body>
-      <h2>📡 P2P Connection Token</h2>
-      <p>Tap <strong>Reveal</strong> to show and copy the token (it will be used only once).</p>
-      <button class="btn btn-primary" onclick="reveal()">Reveal Token</button>
-      <div id="area" style="margin-top:18px;display:none"></div>
-      <script>
-        async function reveal() {
-          try {
-            const r = await fetch('/consume/${id}');
-            const j = await r.json();
-            if (j.error) return showExpired();
-            const area = document.getElementById('area');
-            area.style.display = 'block';
-            area.innerHTML = '<textarea id="tok">'+ j.token +'</textarea><br><br><button class="btn btn-ghost" onclick="copyToken()">Copy</button> <button class="btn btn-primary" onclick="openApp()">Send to App</button>';
-          } catch (err) { showExpired(); }
-        }
-        function showExpired(){ document.body.innerHTML = '<h2>❌ Token expired or already used</h2><p>This token was already used or expired.</p>'; }
-        function copyToken(){ const t = document.getElementById('tok'); t.select(); document.execCommand('copy'); alert('Copied to clipboard'); }
-        function openApp(){ const t = encodeURIComponent(document.getElementById('tok').value); window.location.href = '/?token=' + t; }
-      </script>
-    </body></html>`);
+
+  const accept = (req.headers.accept || '').toLowerCase();
+
+  if (accept.includes('text/html')) {
+    // human visitor — show the reveal/copy UI
+    return res.send(`<!doctype html>
+      <html>
+      <head><meta name="viewport" content="width=device-width,initial-scale=1"><title>P2P Token</title>
+      <style>body{font-family:Arial, Helvetica, sans-serif;padding:20px}.btn{display:inline-block;padding:12px 16px;border-radius:8px;border:none;font-size:16px;margin:6px 0}.btn-primary{background:#0275d8;color:#fff}.btn-ghost{background:#f1f1f1}textarea{width:100%;height:150px;padding:10px;border-radius:8px;border:1px solid #ddd}</style>
+      </head>
+      <body>
+        <h2>📡 P2P Connection Token</h2>
+        <p>Tap <strong>Reveal</strong> to show and copy the token (it will be used only once).</p>
+        <button class="btn btn-primary" onclick="reveal()">Reveal Token</button>
+        <div id="area" style="margin-top:18px;display:none"></div>
+        <script>
+          async function reveal() {
+            try {
+              const r = await fetch('/consume/${id}');
+              const j = await r.json();
+              if (j.error) return showExpired();
+              const area = document.getElementById('area');
+              area.style.display = 'block';
+              area.innerHTML = '<textarea id="tok">'+ j.token +'</textarea><br><br><button class="btn btn-ghost" onclick="copyToken()">Copy</button> <button class="btn btn-primary" onclick="openApp()">Send to App</button>';
+            } catch (err) { showExpired(); }
+          }
+          function showExpired(){ document.body.innerHTML = '<h2>❌ Token expired or already used</h2><p>This token was already used or expired.</p>'; }
+          function copyToken(){ const t = document.getElementById('tok'); t.select(); document.execCommand('copy'); alert('Copied to clipboard'); }
+          function openApp(){ const t = encodeURIComponent(document.getElementById('tok').value); window.location.href = '/?token=' + t; }
+        </script>
+      </body></html>`);
+  }
+
+  // Programmatic client (your app fetch): return the raw token (no HTML).
+  // Keep single-use semantics: delete token after serving.
+  tokens.delete(id);
+  res.type('text/plain').send(token);
 });
 
 app.get('/consume/:id', (req, res) => {

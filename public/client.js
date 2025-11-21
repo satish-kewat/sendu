@@ -1,4 +1,7 @@
-// client.js - final stable version (place under public/)
+// client.updated.js
+// Updated to handle non-JSON responses and show raw server output for debugging.
+// Screenshot referenced (for debugging): /mnt/data/0f1035aa-ef2c-4b6b-9271-fd421dfdff9d.png
+
 (function(){
     const urlParams = new URLSearchParams(window.location.search);
     const autoToken = urlParams.get('token');
@@ -52,16 +55,33 @@ function waitForIceGatheringComplete(pc, timeout = 3000) {
     });
 }
 
-// store token => short url
+// store token => short url (robust, shows server response on error)
 async function storeTokenAndGetShortUrl(tokenString) {
-    const resp = await fetch('/store', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ token: tokenString })
-    });
-    if (!resp.ok) throw new Error('store failed');
-    const { id } = await resp.json();
-    return `${location.origin}/t/${id}`;
+  // You can change base if your API is hosted separately
+  const apiUrl = '/store';
+  const resp = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ token: tokenString })
+  });
+
+  const raw = await resp.text();
+  if (!resp.ok) {
+    // surface server HTML or error to help debugging
+    throw new Error(`store failed: ${resp.status} ${resp.statusText} — ${raw.slice(0,800)}`);
+  }
+
+  // try parse JSON but tolerate plain text (some servers return plain text)
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.id) throw new Error('no id in store response');
+    return `${location.origin}/t/${parsed.id}`;
+  } catch (err) {
+    // If server returned text (e.g. the id itself), handle that
+    const maybeId = raw.trim();
+    if (maybeId) return `${location.origin}/t/${encodeURIComponent(maybeId)}`;
+    throw new Error('Unexpected store response: ' + err.message + ' — ' + raw.slice(0,800));
+  }
 }
 
 // file change
@@ -92,9 +112,16 @@ createConnectionBtn.addEventListener('click', async () => {
     showStatus('Offer created — short URL will be generated', 'info');
 });
 
-// ws messages
+// ws messages (defensive parse)
 ws.onmessage = async (evt) => {
-    const data = JSON.parse(evt.data);
+    let data;
+    try {
+        data = JSON.parse(evt.data);
+    } catch (err) {
+        console.error('Failed to parse ws message as JSON, raw:', (evt.data && evt.data.slice) ? evt.data.slice(0,1000) : evt.data);
+        showStatus('Received non-JSON message from signaling server (see console)', 'error');
+        return;
+    }
 
     if (data.type === 'offer-created') {
         const offerToken = JSON.stringify(data.offer);
@@ -105,6 +132,7 @@ ws.onmessage = async (evt) => {
             answerSection.style.display = 'block';
             showStatus('Offer short URL created. Share the QR.', 'info');
         } catch (err) {
+            console.error('storeToken error:', err);
             tokenInput.value = offerToken;
             generateQRCode(offerToken, 256);
             showStatus('Failed to shorten token — showing full token', 'error');
@@ -119,7 +147,8 @@ ws.onmessage = async (evt) => {
             tokenInput.value = short;
             generateQRCode(short, 128);
             showStatus('Answer short URL created. Send to initiator.', 'success');
-        } catch {
+        } catch (err) {
+            console.error('storeToken error:', err);
             tokenInput.value = answerToken;
             generateQRCode(answerToken, 256);
             showStatus('Failed to shorten token — showing full token', 'error');
@@ -185,6 +214,7 @@ async function handleScannedOrPastedToken(tokenOrUrl) {
         ws.send(JSON.stringify({ type: 'answer', answer: peerConnection.localDescription }));
         showStatus('Answer created. Share with initiator.', 'info');
     } catch (err) {
+        console.error('handleScannedOrPastedToken error', err);
         showStatus('Error processing token: ' + err.message, 'error');
     }
 }
@@ -232,6 +262,7 @@ connectBtn.addEventListener('click', async () => {
         fileInput.disabled = false;
         if (dataChannel && dataChannel.readyState === 'open') shareBtn.disabled = false;
     } catch (err) {
+        console.error('connectBtn error', err);
         showStatus('Error connecting: ' + err.message, 'error');
     }
 });
