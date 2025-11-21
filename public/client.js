@@ -7,8 +7,9 @@
     }
 })();
 
-// WebSocket
-const ws = new WebSocket('ws://localhost:3000');
+// WebSocket - use ws/wss automatically based on page protocol and host
+const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${protocol}://${location.host}/`);
 
 // STUN config
 const configuration = { iceServers: [
@@ -129,6 +130,20 @@ ws.onmessage = async (evt) => {
     if (data.type === 'ice-candidate' && peerConnection) {
         try { await peerConnection.addIceCandidate(data.candidate); } catch (e) { console.error(e); }
     }
+};
+
+// helpful ws handlers for debugging
+ws.onopen = () => {
+    console.log('WebSocket open to', `${protocol}://${location.host}/`);
+    showStatus('Signaling server connected', 'success');
+};
+ws.onerror = (e) => {
+    console.error('WebSocket error', e);
+    showStatus('Signaling connection error', 'error');
+};
+ws.onclose = () => {
+    console.log('WebSocket closed');
+    showStatus('Signaling connection closed', 'info');
 };
 
 // ICE handler
